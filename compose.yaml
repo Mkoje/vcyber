@@ -1,0 +1,52 @@
+services:
+  database:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: victorious_cyber
+      POSTGRES_USER: vcyber
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a strong hexadecimal POSTGRES_PASSWORD in .env}
+    volumes: ['pgdata:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U vcyber -d victorious_cyber']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  # Runs once to provision signatures. Run again regularly to keep them current.
+  antivirus-update:
+    build: .
+    user: root
+    entrypoint: ['sh', '-c']
+    command: ['chown -R clamav:clamav /var/lib/clamav && freshclam --stdout']
+    volumes: ['avdata:/var/lib/clamav']
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DEMO_MODE: 'false'
+      PORT: 3001
+      DATABASE_URL: postgres://vcyber:${POSTGRES_PASSWORD}@database:5432/victorious_cyber
+      DATABASE_SSL: 'false'
+      STORAGE_DIR: /app/storage
+    ports: ['127.0.0.1:3001:3001']
+    volumes: ['files:/app/storage', 'avdata:/var/lib/clamav:ro']
+    depends_on:
+      database: { condition: service_healthy }
+      antivirus-update: { condition: service_completed_successfully }
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  pgdata:
+  files:
+  avdata:
